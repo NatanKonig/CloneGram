@@ -1,0 +1,14 @@
+[project]
+name = "clonegram"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "cryptg>=0.5.0.post0",
+    "pydantic>=2.11.2",
+    "pydantic-settings>=2.8.1",
+    "telethon>=1.39.0",
+    "tqdm>=4.67.1",
+    "uvloop>=0.21.0",
+]
