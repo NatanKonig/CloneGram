@@ -1,0 +1,12 @@
+services:
+  app:
+    image: ${DOCKER_USERNAME}/clonegram:${IMAGE_TAG}
+    container_name: clonegram
+    env_file:
+      - .env
+    environment:
+      - TZ=America/Sao_Paulo
+    volumes:
+      - ./sessions:/app/sessions
+      - ./progress.json:/app/progress.json
+      - ./activity_counters.json:/app/activity_counters.json

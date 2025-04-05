@@ -54,10 +54,11 @@ class Bot(TelegramClient):
 
         # Initialize TelegramClient
         super().__init__(
-            session=settings.account_name,
+            session="./sessions/"+settings.account_name,
             api_id=settings.api_id,
             api_hash=settings.api_hash,
-            flood_sleep_threshold=11
+            flood_sleep_threshold=11,
+            
         )
 
     async def get_last_message(self, chat):
