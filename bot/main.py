@@ -1,6 +1,7 @@
 from settings import Settings
 from rate_limit import TokenBucket
 from progress_tracker import ProgressTracker
+from safety import AntiDetectionSafety
 from utils import create_progress_callback
 
 from telethon import TelegramClient
@@ -37,8 +38,11 @@ class Bot(TelegramClient):
 
         # Progress tracking
         self.progress_tracker = ProgressTracker()
+        
+        # Anti-ban safety measures
+        self.safety = AntiDetectionSafety(settings)
 
-        # Rate limiting (20 messages per minute)
+        # Rate limiting (based on settings)
         seconds_in_minute = 60
         self.rate_limit = 20
         self.interval = seconds_in_minute / self.rate_limit
@@ -121,6 +125,16 @@ class Bot(TelegramClient):
         try:
             logger.info(f"Forwarding media group with {len(messages)} items")
             
+            # Apply safety delay before sending media group (with media flag set to True)
+            try:
+                can_proceed = await self.safety.apply_delay(is_media=True)
+                if not can_proceed:
+                    logger.warning("Daily media limit reached, skipping media group")
+                    return None
+            except Exception as e:
+                logger.error(f"Error in safety delay for media group: {str(e)}")
+                # Continue with the forwarding even if the safety mechanism fails
+                
             if not messages[0].noforwards:
                 # If forwarding is allowed, forward as a group
                 return await self.forward_messages(
@@ -140,7 +154,7 @@ class Bot(TelegramClient):
             await asyncio.sleep(wait_time)
             return None
         except Exception as e:
-            logger.error(f"Error sending media group: {e}")
+            logger.error(f"Error sending media group: {str(e)}")
             return None
 
     async def _forward_message(
@@ -152,6 +166,18 @@ class Bot(TelegramClient):
     ) -> Message | None:
         """Forward a message to the destination chat"""
         try:
+            # Apply safety delay before forwarding
+            # Check if message has media
+            has_media = message.media is not None
+            try:
+                can_proceed = await self.safety.apply_delay(is_media=has_media)
+                if not can_proceed:
+                    logger.warning(f"Rate limit reached, skipping message ID {message.id}")
+                    return None
+            except Exception as e:
+                logger.error(f"Error in safety delay for message {message.id}: {str(e)}")
+                # Continue with the forwarding even if the safety mechanism fails
+                
             if not message.noforwards and not group_policy: 
                 return await self.forward_messages(
                     entity=chat_id,
@@ -182,6 +208,9 @@ class Bot(TelegramClient):
             wait_time = e.seconds
             logger.warning(f"FloodWaitError. Waiting {wait_time} seconds...")
             await asyncio.sleep(wait_time)
+            return None
+        except Exception as e:
+            logger.error(f"Unexpected error forwarding message {message.id}: {str(e)}")
             return None
 
     async def _process_message(
@@ -251,10 +280,12 @@ class Bot(TelegramClient):
                         del self.media_groups[group_id]
 
             try:
-                # Check rate limiting
+                # Basic rate limiting is still applied to prevent API errors
                 while not self.bucket.consume():
-                    logger.info(f"Preventing flood, waiting {self.interval} seconds")
+                    logger.info(f"Preventing API flood, waiting {self.interval} seconds")
                     await asyncio.sleep(self.interval)
+                    
+                # The more sophisticated safety delays are applied in the send methods
 
                 item = await self.messages_queue.get()
                 
@@ -359,6 +390,7 @@ class Bot(TelegramClient):
             offset_date=offset_date,
         )
 
+
 async def main():
     bot = Bot()
 
@@ -366,12 +398,6 @@ async def main():
         phone=settings.phone_number,
         password=settings.password
     )
-
-    # Chat to catch from (replace with your actual chat ID)
-    origin_group = -1002080816623
-
-    # Chat to send to (replace with your actual chat ID)
-    destiny_group = -1002675648809 
 
     # Topic that you want to send (uncomment if needed)
     # topic_id = None
@@ -381,8 +407,8 @@ async def main():
 
     logger.info("\n>>> Cloner up and running.\n")
     await bot.clone_messages(
-        origin_group_id=origin_group,
-        destiny_group_id=destiny_group,
+        origin_group_id=settings.origin_group,
+        destiny_group_id=settings.destiny_group,
         # topic_id=topic_id,
         offset_id=offset_id
     )
