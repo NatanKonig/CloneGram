@@ -1,10 +1,10 @@
 import time
 
 class TokenBucket:
-    def __init__(self, inicial_tokens: int, max_tokens: int, refill_interval: float):
+    def __init__(self, initial_tokens: int, max_tokens: int, refill_interval: float):
         self.max_tokens = max_tokens
         self.refill_interval = refill_interval
-        self.tokens = inicial_tokens
+        self.tokens = initial_tokens
         self.last_refill_time = time.time()
 
     def _refill_tokens(self):

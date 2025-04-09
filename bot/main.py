@@ -2,7 +2,6 @@ from settings import Settings
 from rate_limit import TokenBucket
 from progress_tracker import ProgressTracker
 from safety import AntiDetectionSafety
-from utils import create_progress_callback
 
 from telethon import TelegramClient
 from telethon.tl.types import Message, MessageService
@@ -47,7 +46,7 @@ class Bot(TelegramClient):
         self.rate_limit = 20
         self.interval = seconds_in_minute / self.rate_limit
         self.bucket = TokenBucket(
-            inicial_tokens=1,
+            initial_tokens=1,
             max_tokens=self.rate_limit,
             refill_interval=self.interval
         )
@@ -126,7 +125,9 @@ class Bot(TelegramClient):
         try:
             logger.info(f"Forwarding media group with {len(messages)} items")
             
-            # Apply safety delay before sending media group (with media flag set to True)
+            # Para evitar problemas com o limite de batch, garantimos que os media groups 
+            # sejam tratados como uma única entidade, não como mensagens individuais
+            # Aplicamos apenas um delay antes de enviar todo o grupo
             try:
                 can_proceed = await self.safety.apply_delay(is_media=True)
                 if not can_proceed:
@@ -137,13 +138,26 @@ class Bot(TelegramClient):
                 # Continue with the forwarding even if the safety mechanism fails
                 
             if not messages[0].noforwards:
-                # If forwarding is allowed, forward as a group
-                return await self.forward_messages(
-                    entity=chat_id,
-                    messages=messages,
-                    from_peer=messages[0].chat.id,
-                    drop_author=True,
-                )
+                # Se o forwarding é permitido, encaminhe como um grupo
+                # Adicionamos um tratamento de erro mais robusto aqui
+                try:
+                    result = await self.forward_messages(
+                        entity=chat_id,
+                        messages=messages,
+                        from_peer=messages[0].chat.id,
+                        drop_author=True,
+                    )
+                    return result
+                except Exception as e:
+                    logger.error(f"Error forwarding media group: {str(e)}")
+                    # Em caso de erro, tente enviar novamente após um breve intervalo
+                    await asyncio.sleep(5)
+                    return await self.forward_messages(
+                        entity=chat_id,
+                        messages=messages,
+                        from_peer=messages[0].chat.id,
+                        drop_author=True,
+                    )
             else:
                 # If forwarding is not allowed, inform and skip
                 logger.warning(f"Media group cannot be forwarded due to forward restrictions")
@@ -253,6 +267,9 @@ class Bot(TelegramClient):
         self.last_processed_msg = offset_id
         self.last_msg_id = await self.get_last_message(origin_chat)
 
+        # Adicionamos uma flag para garantir que não vamos quebrar media groups entre batches
+        current_media_group_processing = False
+
         while True:
             if self.messages_queue.empty():
                 if self.finished_queue:
@@ -282,10 +299,13 @@ class Bot(TelegramClient):
 
             try:
                 # Basic rate limiting is still applied to prevent API errors
-                while not self.bucket.consume():
-                    logger.info(f"Preventing API flood, waiting {self.interval} seconds")
-                    await asyncio.sleep(self.interval)
-                    
+                # IMPORTANTE: Se estamos no meio de um media group, não fazemos o rate limiting
+                # para evitar que o grupo seja dividido
+                if not current_media_group_processing:
+                    while not self.bucket.consume():
+                        logger.info(f"Preventing API flood, waiting {self.interval} seconds")
+                        await asyncio.sleep(self.interval)
+                
                 # The more sophisticated safety delays are applied in the send methods
 
                 item = await self.messages_queue.get()
@@ -293,6 +313,7 @@ class Bot(TelegramClient):
                 # Check if it's a media group
                 if isinstance(item, tuple) and item[0] == "media_group":
                     _, group_id, messages = item
+                    current_media_group_processing = True  # Estamos processando um media group
                     try:
                         result = await self._send_media_group(
                             chat_id=destiny_chat.id,
@@ -310,12 +331,18 @@ class Bot(TelegramClient):
                             latest_msg_id = max(msg.id for msg in messages)
                             self.last_processed_msg = latest_msg_id
                             self.progress_tracker.save_progress(origin_chat.id, latest_msg_id)
+                        
+                        # Adicionamos um pequeno delay entre grupos de mídia
+                        await asyncio.sleep(2)
+                        
                     except FloodWaitError as e:
                         wait_time = e.seconds
                         logger.warning(f"FloodWaitError when sending media group. Waiting {wait_time} seconds...")
                         await asyncio.sleep(wait_time)
                         # Put the item back in the queue to try again later
                         await self.messages_queue.put(item)
+                    finally:
+                        current_media_group_processing = False  # Terminamos de processar o media group
                 else:
                     # Regular message
                     message = item
@@ -341,7 +368,7 @@ class Bot(TelegramClient):
                         await self.messages_queue.put(message)
                     except ChatWriteForbiddenError:
                         logger.error(f"No permission to write in the destination chat. Skipping message {message.id}")
-           
+        
             except Exception as e:
                 logger.error(f"Unexpected error processing message: {e}")
                 # Continue processing other messages

@@ -299,8 +299,10 @@ class AntiDetectionSafety:
                 logger.warning(f"Daily media limit reached ({daily_media_count}/{self.settings.daily_media_limit}). Waiting until midnight ({wait_time} seconds)")
                 return False, wait_time
         
-        # Check batch size limit
-        if self.current_batch_count >= self.settings.max_batch_size:
+        # Check batch size limit - MODIFICAÇÃO PARA RESOLVER O PROBLEMA
+        # Só verifica o limite de batch se não for uma mensagem de mídia,
+        # pois os media groups precisam ser tratados de forma especial
+        if not is_media and self.current_batch_count >= self.settings.max_batch_size:
             self.current_batch_count = 0  # Reset batch counter
             logger.warning(f"Batch size limit reached ({self.settings.max_batch_size}). Taking a break for {self.settings.batch_cooldown} seconds")
             return False, self.settings.batch_cooldown
@@ -321,8 +323,8 @@ class AntiDetectionSafety:
             daily_media_count = self.daily_media_counters.get(current_day, 0) if is_media else 0
             
             logger.info(f"Current counts: hourly={hourly_count}/{self.settings.hourly_limit}, "
-                      f"daily={daily_count}/{self.settings.daily_limit}, "
-                      f"media={daily_media_count}/{self.settings.daily_media_limit}")
+                    f"daily={daily_count}/{self.settings.daily_limit}, "
+                    f"media={daily_media_count}/{self.settings.daily_media_limit}")
             
             # Check if we're within rate limits
             can_proceed, wait_time = self._check_rate_limits(is_media)
