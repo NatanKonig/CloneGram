@@ -1,5 +1,4 @@
-
-# CloneGram
+# CloneGram - [README em Português](https://github.com/NatanKonig/CloneGram/blob/main/README-ptbr.md)
 
 <p align="center">
   <img src="https://img.shields.io/badge/Python-3.12-blue.svg" alt="Python 3.12">
@@ -219,5 +218,3 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE]() file
 * [Telethon](https://github.com/LonamiWebs/Telethon) for providing the Python API for Telegram
 
 ---
-
-[README em Português]()
