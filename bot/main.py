@@ -77,6 +77,7 @@ class Bot(TelegramClient):
     ) -> None:
         """Fetch messages from origin chat and add them to the queue"""
         try:
+            message_count = 0
             async for message in self.iter_messages(
                 entity=origin_chat,
                 limit=limit,
@@ -84,6 +85,7 @@ class Bot(TelegramClient):
                 offset_date=offset_date,
                 reverse=reverse
             ):
+                message_count += 1
                 logger.info(f"Fetched message ID: {message.id}")
                 
                 # Check if message is part of a media group
@@ -110,7 +112,17 @@ class Bot(TelegramClient):
                             self.processed_media_groups.add(group_id)
                     
                     return
-              
+            
+            # Se não encontrou mais mensagens ou chegou ao limite
+            if message_count == 0:
+                self.finished_queue = True
+                logger.info("No more messages to fetch")
+            elif message_count < limit:
+                self.finished_queue = True
+                logger.info(f"Fetched final {message_count} messages (less than limit)")
+            else:
+                logger.info(f"Fetched {message_count} messages, continuing pagination...")
+                
         except FloodWaitError as e:
             logger.warning(f"FloodError detected, waiting {e.seconds} seconds...")
             await asyncio.sleep(e.seconds)
@@ -405,24 +417,64 @@ class Bot(TelegramClient):
             logger.error(f"Error with destiny chat: {e}")
             return
 
-        # If offset_id is not provided, check if we have progress data
-        if offset_id is None:
-            offset_id = self.progress_tracker.get_progress(origin_chat.id)
-            logger.info(f"Resuming from last processed message ID: {offset_id}")
+        # Se estamos começando do zero (primeira execução)
+        if offset_id is None and not self.progress_tracker.get_progress(origin_chat.id):
+            logger.info("Primeira execução, processando todas as mensagens...")
+            self.finished_queue = False  # Garantir que a flag está resetada
+            await self._process_messages(
+                destiny_chat=destiny_chat,
+                origin_chat=origin_chat,
+                topic_id=topic_id,
+                offset_id=offset_id,
+                offset_date=offset_date,
+            )
+        else:
+            # Para execuções subsequentes, use o método otimizado
+            await self.check_and_clone_new_messages(
+                origin_chat=origin_chat,
+                destiny_chat=destiny_chat,
+                topic_id=topic_id,
+                offset_date=offset_date
+            )
 
-        # Obtém a última mensagem do grupo para saber se tem novas
-        last_msg_id = await self.get_last_message(origin_chat)
+    async def check_and_clone_new_messages(
+        self,
+        origin_chat,
+        destiny_chat,
+        topic_id: Optional[int] = None,
+        offset_date: Optional[datetime] = None
+    ) -> None:
+        """Verifica e clona apenas mensagens novas"""
         
-        # Verifica se já processou todas as mensagens
-        if offset_id and offset_id >= last_msg_id:
-            logger.info(f"Nenhuma nova mensagem para processar. Última mensagem: {last_msg_id}, última processada: {offset_id}")
+        # Obter o último ID processado
+        last_processed_id = self.progress_tracker.get_progress(origin_chat.id)
+        
+        # Obter o ID da última mensagem no grupo de origem
+        latest_message_id = await self.get_last_message(origin_chat)
+        
+        logger.info(f"Última mensagem processada: {last_processed_id}, última mensagem no grupo: {latest_message_id}")
+        
+        # Verificar se há novas mensagens
+        if last_processed_id >= latest_message_id:
+            logger.info("Nenhuma mensagem nova para processar.")
             return
         
+        # Número de novas mensagens
+        new_messages_count = latest_message_id - last_processed_id
+        logger.info(f"Detectadas {new_messages_count} novas mensagens para processar.")
+        
+        # Reiniciar as filas e flags para nova execução
+        self.messages_queue = asyncio.Queue()
+        self.finished_queue = False
+        self.processed_media_groups.clear()
+        self.media_groups.clear()
+        
+        # Processar as novas mensagens
         await self._process_messages(
             destiny_chat=destiny_chat,
             origin_chat=origin_chat,
             topic_id=topic_id,
-            offset_id=offset_id,
+            offset_id=last_processed_id,
             offset_date=offset_date,
         )
 
@@ -442,35 +494,45 @@ async def main():
     offset_id = None  # Using progress tracking
 
     logger.info("\n>>> Cloner up and running.\n")
+    if settings.continuous_mode:
+        logger.info(f"Modo contínuo ativado. Intervalo de verificação: {settings.check_interval} segundos")
+    
+    # Loop contínuo se continuous_mode estiver ativado
+    first_run = True
+    
     while True:
         try:
             # Execute a clonagem
             await bot.clone_messages(
                 origin_group_id=settings.origin_group,
                 destiny_group_id=settings.destiny_group,
-                # topic_id=topic_id,
-                offset_id=offset_id
+                # topic_id=topic_id, (descomente se necessário)
+                offset_id=None if first_run else 1  # Na primeira execução processa tudo, depois apenas as novas
             )
+            
+            first_run = False
             
             # Se não estiver em modo contínuo, saia do loop
             if not settings.continuous_mode:
+                logger.info("Modo contínuo desativado. Encerrando após processamento.")
                 break
             
             # Log informando que verificará novamente
-            logger.info(f"Todas as mensagens processadas. Verificando novamente em {settings.check_interval} segundos...")
+            logger.info(f"Verificando novamente em {settings.check_interval} segundos...")
             
             # Aguarde o intervalo configurado
             await asyncio.sleep(settings.check_interval)
             
-            logger.info("Iniciando nova verificação de mensagens...")
-            
         except Exception as e:
             logger.error(f"Erro durante execução contínua: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             # Em caso de erro, aguarde um tempo antes de tentar novamente
+            logger.info("Tentando novamente em 60 segundos...")
             await asyncio.sleep(60)  # Espera 1 minuto em caso de erro
-            continue
 
     await bot.disconnect()
+    
 
 if __name__ == "__main__":
     asyncio.run(main())
