@@ -410,6 +410,14 @@ class Bot(TelegramClient):
             offset_id = self.progress_tracker.get_progress(origin_chat.id)
             logger.info(f"Resuming from last processed message ID: {offset_id}")
 
+        # Obtém a última mensagem do grupo para saber se tem novas
+        last_msg_id = await self.get_last_message(origin_chat)
+        
+        # Verifica se já processou todas as mensagens
+        if offset_id and offset_id >= last_msg_id:
+            logger.info(f"Nenhuma nova mensagem para processar. Última mensagem: {last_msg_id}, última processada: {offset_id}")
+            return
+        
         await self._process_messages(
             destiny_chat=destiny_chat,
             origin_chat=origin_chat,
@@ -434,12 +442,33 @@ async def main():
     offset_id = None  # Using progress tracking
 
     logger.info("\n>>> Cloner up and running.\n")
-    await bot.clone_messages(
-        origin_group_id=settings.origin_group,
-        destiny_group_id=settings.destiny_group,
-        # topic_id=topic_id,
-        offset_id=offset_id
-    )
+    while True:
+        try:
+            # Execute a clonagem
+            await bot.clone_messages(
+                origin_group_id=settings.origin_group,
+                destiny_group_id=settings.destiny_group,
+                # topic_id=topic_id,
+                offset_id=offset_id
+            )
+            
+            # Se não estiver em modo contínuo, saia do loop
+            if not settings.continuous_mode:
+                break
+            
+            # Log informando que verificará novamente
+            logger.info(f"Todas as mensagens processadas. Verificando novamente em {settings.check_interval} segundos...")
+            
+            # Aguarde o intervalo configurado
+            await asyncio.sleep(settings.check_interval)
+            
+            logger.info("Iniciando nova verificação de mensagens...")
+            
+        except Exception as e:
+            logger.error(f"Erro durante execução contínua: {e}")
+            # Em caso de erro, aguarde um tempo antes de tentar novamente
+            await asyncio.sleep(60)  # Espera 1 minuto em caso de erro
+            continue
 
     await bot.disconnect()
 

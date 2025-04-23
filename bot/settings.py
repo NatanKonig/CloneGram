@@ -26,6 +26,8 @@ class Settings(BaseSettings):
     night_multiplier: float = 2.0 # Multiply delays by this factor during night hours
     weekend_mode: bool = False    # Whether to reduce activity during weekends
     weekend_multiplier: float = 1.5 # Multiply delays by this factor during weekends
+    check_interval: int = 300    # Intervalo para verificar novas mensagens (segundos)
+    continuous_mode: bool = True # Executar continuamente verificando novas mensagens
 
     class Config:
         env_file = '.env'
