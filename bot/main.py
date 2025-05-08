@@ -62,7 +62,7 @@ class Bot(TelegramClient):
 
     async def get_last_message(self, chat):
         """Get the last message ID in a chat"""
-        async for message in self.iter_messages(entity=chat, limit=1):
+        async for message in self.iter_messages(entity=chat, limit=1, min_id=0):
             logger.info(f"Total messages in the group: {message.id}")
             return message.id
         return 0
@@ -77,13 +77,17 @@ class Bot(TelegramClient):
     ) -> None:
         """Fetch messages from origin chat and add them to the queue"""
         try:
+            if offset_id is None:
+                offset_id = 0
+
             message_count = 0
             async for message in self.iter_messages(
                 entity=origin_chat,
                 limit=limit,
                 offset_id=offset_id,
                 offset_date=offset_date,
-                reverse=reverse
+                reverse=reverse,
+                min_id=0,
             ):
                 message_count += 1
                 logger.info(f"Fetched message ID: {message.id}")
